@@ -1,0 +1,3 @@
+# SELEXER
+
+Simulate SELEX process
