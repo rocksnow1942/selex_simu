@@ -34,6 +34,8 @@ res = fsolve(multiBinding,T0/2,args=(aptc,aptcKd,T0))
 multiBinding(TFree,aptc,aptcKd,T0)
 multiBinding(TFree,aptc,aptcKd,T0)
 
+
+
 aptcKd.max()
 aptcKd.min()
 res
@@ -115,6 +117,8 @@ def binding_ode(kf,kd,start_conc,period):
 binding_ode(kf=1e-2,kd=1,start_conc=[1.66e-8,1,0],period=5)
 
 r = np.random.rand(10000000)
+
+
 
 e = np.log(1/r)
 
@@ -204,8 +208,9 @@ def stochastic_simu(kd,kf,vol,start_conc,period=30000,plot=0):
     ax.grid()
     plt.tight_layout()
 
-
-
+a=np.array([0,1,4,5])
+a[np.logical_and(a>0  ,a<3)]
+np.logical_and(a>0  ,a<3)
 THeo = np.random.binomial(1000,0.5)
 THeo
 A = [i[0] for i in conc]
@@ -276,3 +281,13 @@ b[b>2] = np.array([1])
 b
 
 b
+import numpy as np
+a=np.array([1,2,3,4,5,])
+
+c = a>3
+a[np.invert(c)]
+c
+np.invert(c)
+
+
+np.searchsorted(a,0)
