@@ -190,23 +190,28 @@ class Round():
         self.vol = vol
         self.incubateTime = incubateTime * 60
         self.targetConc = targetConc
-        self.output = None
+        self.equilibriumOutput = np.array([])
+        self.kineticsOutput = np.array([])
         self.ns = np.array([])
         self.name = name
 
     @property
-    def outputRatio(self):
+    def outputRatio(self,):
         """
         aptamer output / input  ratio.
         """
-        return (self.output.sum()+self.ns.sum())/self.inputCount
+        e = (self.equilibriumOutput.sum()+self.ns.sum())/self.inputCount
+        k = (self.kineticsOutput.sum()+self.ns.sum())/self.inputCount
+        return {'equilibrium':e,'kinetics':k}
 
     @property
     def targetBindRatio(self):
         """
         percentage of target binding to aptamer.
         """
-        return self.output.sum() * (1e6 * 1e9 / NA / self.vol) / (self.targetConc)
+        e= self.equilibriumOutput.sum() * (1e6 * 1e9 / NA / self.vol) / (self.targetConc)
+        k = self.kineticsOutput.sum() * (1e6 * 1e9 / NA / self.vol) / (self.targetConc)
+        return  {'equilibrium':e,'kinetics':k}
 
     def nonspecificBinding(self,nonspecific):
         vec = np.vectorize(np.random.binomial)
@@ -249,9 +254,57 @@ class Round():
 
         return timepoints, result
 
+    def plotBindingKinetics(self,index=0,curve='AT', type = 'd'):
+        """
+        type is [d]eterministic or [s]tochastic
+        """
+        p = self.input
+        def plot(x,y,title,ylabel='Conc. / nM'):
+            fig,ax = plt.subplots()
+            ax.plot(x,y)
+            ax.set_xlabel('Time / min')
+            ax.set_ylabel(ylabel)
+            ax.set_title(title)
+            ax.grid()
+            plt.tight_layout()
+            plt.show()
+        if type in ['deterministic','d']:
+            assert index < len(self.dIndex), (f"Max deterministic index {len(self.dIndex)-1}")
+            a = self.dIndex[index]
+            title = "Kd {:.1e}nM; Kon {:.1e}nMs-1; Koff {:.1e}s-1".format(
+                p.kds[a],p.kon[a],p.koff[a] )
+            if curve == 'AT':
+                y = self.dATConc[:,index]
+            elif curve == 'A':
+                aconc = self.input.count[a]  * (1e6 * 1e9 / NA / self.vol)
+                y = aconc - self.dATConc[:,index]
+            elif curve == 'T':
+                y = self.targetConc - self.dATconc.sum(axis=1)
+                title = f"Target Starting Conc. {self.targetConc}nM"
+            ylabel = f"{curve} Conc. /nM"
+            plot( self.dTime /60 , y ,title, ylabel)
+        elif type in ['stochastic','s']:
+            assert index < len(self.ssIndex), (f"Max stochastic index {len(self.ssIndex)-1}")
+            a = self.ssIndex[index]
+            title = "Kd {:.1e}nM; Kon {:.1e}nM-1s-1; Koff {:.1e}s-1".format(
+                p.kds[a],p.kon[a],p.koff[a] )
+            t = self.ssTrace[index][0]
+            if curve == 'AT':
+                y = self.ssTrace[index][1]
+            elif curve == 'A':
+                aconc = self.input.count[a]
+                y = aconc - self.ssTrace[index][1]
+            elif curve == 'T':
+                t = self.dTime
+                y = self.targetConc - self.dATconc.sum(axis=1)
+                title = f"Target Starting Conc. {self.targetConc}nM"
+            plot( t/60 , y ,title,ylabel=f"{curve} Count")
 
-
-    def solve_binding_ode(self,stochasticCutoff = 1e3):
+    def solveBindingKinetics(self,stochasticCutoff = 1e3,seCutoff = 1e-2):
+        """
+        stochasticCutoff: how many counts down to use stochastic method.
+        seCutoff: halflives cut off for a sequence to be considerred by stochastic method.
+        """
         pool = self.input
         count = self.input.count
         kds = self.input.kds
@@ -264,13 +317,15 @@ class Round():
         dkoff = pool.koff[dcount]
         dconc = count[dcount]  * (1e6 * 1e9 / NA / self.vol) # conc. in nM
 
-        print('Pool {} binding half life {:.2e} - {:.2e} minutes.'.format(
+        print('Pool {} binding half life {:.2e} ~ {:.2e} minutes.'.format(
                     self.name, np.log(2)/60/(dkon.max() * T0), np.log(2) /60/ (dkon.min() * T0) ))
 
         timepoints, result=self._solve_deterministic_ode(dkon,dkoff,dconc,T0,np.zeros_like(dconc).astype(float),Time)
 
+        self.dIndex = dcount.nonzero()[0]
         self.dTime = timepoints
         self.dATConc = result
+
         finalTfree = T0 - result[-1].sum()
 
         # calculate aptame with 0<count < stochasticCutoff using master equation stochastic method.
@@ -280,39 +335,83 @@ class Round():
         skoff = pool.koff[scount]
         halflives = np.log(2) / (skon * finalTfree)
 
-        # the one that have halflives < 1/4 of the incubateTime can be considerred reach equilibrium.
-        secount = halflives < 0.25 * Time
+        # the one that have halflives < 1/10 of the incubateTime can be considerred reach equilibrium.
+        secount = halflives < seCutoff * Time
+        print('Pool {} fast stochastic count {}'.format(self.name, secount.sum()))
         sekds = kds[scount][secount]
         sepercentbinding = finalTfree/(finalTfree + sekds)
-        vecbinomial = np.vectorize(np.random.binomial,otype=[int])
+        vecbinomial = np.vectorize(np.random.binomial,otypes=[int])
         secomplex = vecbinomial(sconc[secount],sepercentbinding)
 
         # the remaining ones use simulation.
         sscount = np.invert(secount)
+        print('Pool {} slow stochastic count {}'.format(self.name, sscount.sum()))
+        ssconc = sconc[sscount]
+        sskon = skon[sscount]
+        sskoff = skon[sscount]
+        self.ssTrace = []
+        self.ssIndex = scount.nonzero()[0][sscount]
+        sscomplex = []
+        for on,off,c in zip(sskon,sskoff,ssconc):
+            t,atconc = self._solve_stochastic_ode(on,off,c)
+            self.ssTrace.append((t,atconc))
+            sscomplex.append(atconc[-1])
 
+        # combine results together
+        resultcount = np.zeros_like(count).astype(float)
+        resultcount[dcount] = self.dATConc[-1] * self.vol * NA / 1e15
+        temps = resultcount[scount]
+        temps[secount] = secomplex
+        temps[sscount] = np.array(sscomplex)
+        resultcount[scount] = temps
 
+        frequency = resultcount / resultcount.sum()
+        self.kineticsOutput = resultcount
+        return Pool(kon=self.input.kon,koff=self.input.koff,
+                frequency = frequency,pcrE=self.input.pcrE,
+                count = resultcount,name=self.name)
 
+    def _solve_stochastic_ode(self,kon,koff,conc,maxiteration=1e3):
+        """
+        solve time course of stochastic binding of aptamer in this round context.
 
+        """
+        vol = self.vol
+        EndTime = self.incubateTime
+        time = [0]
+        ATconc = [0] # record of AT complex count
+        temp = 0
+        cycles = 0
+        while cycles < maxiteration:
+            cycles +=1
+            a = conc - ATconc[-1] # input is count.
+            t = self._getTfreeAtTime(temp)  # get free Target conc. in nM
+            ar = koff * ATconc[-1]
+            af = kon * a * t
+            suma = af + ar
+            r1 = np.random.random()
+            dt = 1/suma * np.log(1/r1)
+            rxn = np.random.choice([1,-1],p=[af/suma,ar/suma]) # choose reaction forward or reverse.
+            temp += dt
+            if temp > EndTime:
+                break
+            ATconc.append(ATconc[-1]+rxn) # update AT count record.
+            time.append(temp)
+        return np.array(time),np.array(ATconc)
 
-        # def timestep(start_conc):
-
-        return timepoints, result
-
-    def _solve_stochastic_ode(self,):
-        pass 
 
         # pass
     def _getTfreeAtTime(self,t):
         """
         use ODE solved dTime and dATConc to give Tfree at any given time.
         """
-        index = np.searchsorted(self.dTime,t)
+        index = np.absolute(self.dTime - t).argmin()
         return self.targetConc - self.dATConc[index].sum()
 
 
 
 
-    def solve_binding_equil(self,stochasticCutoff = 1e3):
+    def solveBindingEquilibrium(self,stochasticCutoff = 1e3):
         count = self.input.count
         kds = self.input.kds
         T0 = self.targetConc
@@ -344,10 +443,10 @@ class Round():
         resultcount[scount] = scomplex
 
         frequency = resultcount / resultcount.sum()
-        self.output = resultcount
+        self.equilibriumOutput = resultcount
         return Pool(kon=self.input.kon,koff=self.input.koff,
                 frequency = frequency,pcrE=self.input.pcrE,
-                count = resultcount)
+                count = resultcount,name=self.name)
 
 class Selection():
     def __init__(self,lib,seed=42):
@@ -382,15 +481,14 @@ class Selection():
         pool.setupPool(inputCount,rareTreat)
         rd = Round(pool,volume,targetConc,incubateTime,name=f'R{1+len(self.rounds)}')
         if method == 'equilibrium':
-            nx = rd.solve_binding_equil()
+            nx = rd.solveBindingEquilibrium()
         elif method == 'kinetic':
-            nx = rd.solve_binding_ode()
+            nx = rd.solveBindingKinetics()
 
         if nonspecific:
             nsbinding = rd.nonspecificBinding(nonspecific)
             nx.count = nsbinding + nx.count
             nx.frequency = nx.count/nx.count.sum()
-        nx.name = f"R{len(self.pools)}"
         self.rounds.append(rd)
         self.pools.append(nx)
         return self
@@ -412,15 +510,42 @@ class Selection():
             toplot = self.pools[pools]
         plotPoolKdComparison(toplot,marker,color)
 
-lib = NormalDistPool(bins=1e4,koff=1,kdrange=[1e-3,1e8],kdavg=1)
+
+
+
+
+lib = NormalDistPool(bins=1e4,koff=1,kdrange=[1e-3,1e8],kdavg=1e4)
 
 lib.setupPool(1e15,rareTreat =1e-2)
 
 rd = Round(lib,100,10,120,name='R1')
 
+rd.incubateTime
+
+pool = rd.solveBindingKinetics()
+
+len(rd.ssIndex)
+len(rd.dIndex)
+len(rd.input.count)
+len(rd.input.count.nonzero()[0])
+
+rd.ssTrace[7]
+
+np.array([len(i[0]) for i in rd.ssTrace])
+
+rd.plotBindingKinetics(1,curve='AT',type='s')
+
+len(rd.ssTrace)
+rd.ssTrace[6]
+
+lib.plotKdHist()
+
+pool.setupPool(1e13)
+pool.plotKdHist()
 
 
-t,res = rd.solve_binding_ode()
+
+
 t[-1]
 len(t)
 def plot(x):
@@ -469,39 +594,3 @@ s.runSelection(1e15,100,"pool.meanKd/100000",120,rareTreat=1e-2,nonspecific=1e-5
 .runSelection(1e13,100000,"pool.meanKd/100000",120,nonspecific=1e-5)\
 .amplify(targetcount=1e13)\
 .setupPool(1e13)
-
-
-s['R1'].koff
-
-s.plotPoolsKdHist(marker=",",color='tab10',pools=[5,6])
-
-for i in s.pools:
-    print('{:.1e}'.format(i.count.sum()))
-
-
-s.pools[-1].plotKdHist()
-
-i=6
-np.logical_and(s[i].count<1000,s[i].count>0).sum()
-
-
-s.plotPoolsKdHist(marker=".",color='tab10')
-
-for i in s.pools:
-    print("{:.2e}".format( i.totalcount))
-    print('Pool Kd {:.3g}nM'.format(i.meanKd ))
-
-
-for i in s.pools:
-    print("{:.2e}".format( i.totalcount))
-    print('Pool Kd {:.3g}nM'.format(i.meanKd ))
-
-for r in s.rounds:
-    print("{:.2e}".format(r.outputRatio))
-
-for r in s.rounds:
-    print("{:.2%}".format(r.targetBindRatio))
-
-
-for r in s.rounds:
-    print("{:.2%}".format(r.targetBindRatio))

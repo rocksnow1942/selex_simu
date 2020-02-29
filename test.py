@@ -34,8 +34,6 @@ res = fsolve(multiBinding,T0/2,args=(aptc,aptcKd,T0))
 multiBinding(TFree,aptc,aptcKd,T0)
 multiBinding(TFree,aptc,aptcKd,T0)
 
-
-
 aptcKd.max()
 aptcKd.min()
 res
@@ -55,8 +53,18 @@ calculatedPercentBinding = TFree/(TFree+aptcKd)
 
 (calculatedPercentBinding - aptPercentBinding).max()
 
-
-a= np.array([0.1,0.01])
+a = np.array([[1,2],[3,4]])
+a.sum(axis=1)
+a[:,0]
+a= np.array([0.1,0.01,0,100,2,3])
+(a>1).sum()
+(a>1).nonzero()
+a.nonzero()
+b = a[a<3]
+b
+a[a<3][b<1]=np.array([1,2,3])
+a
+np.abs(a-10).argmin()
 a.apply(lambda x: x)
 
 np.apply_along_axis(a,)
@@ -118,7 +126,17 @@ binding_ode(kf=1e-2,kd=1,start_conc=[1.66e-8,1,0],period=5)
 
 r = np.random.rand(10000000)
 
+np.zeros_like(a).astype(float)
 
+a = np.array([1,2,0,1,0,3])
+a.dtype
+(a/12).dtype
+a[a.nonzero()]
+a.nonzero()
+n = np.empty_like(a)
+n.fill(0.01)
+n
+a[a.nonzero()]
 
 e = np.log(1/r)
 
@@ -208,9 +226,15 @@ def stochastic_simu(kd,kf,vol,start_conc,period=30000,plot=0):
     ax.grid()
     plt.tight_layout()
 
-a=np.array([0,1,4,5])
-a[np.logical_and(a>0  ,a<3)]
-np.logical_and(a>0  ,a<3)
+import numpy as np
+np.random.choice([[1,2],[2,3]],p=[0.1,0.9])
+a=np.array([1,2,3])
+
+def test(a):
+    a-=1
+    print(a)
+test(a[-2])
+a
 THeo = np.random.binomial(1000,0.5)
 THeo
 A = [i[0] for i in conc]
@@ -224,7 +248,9 @@ plt.show()
 vec = np.vectorize(np.random.binomial)
 vec([100,100],[0.2,0.5])
 
-a = np.array([1,2,3,4,5])
+a = np.array([1,2,3,4,5.1])
+a[a>3] = np.array([1,2])
+a
 a[a>2]=np.array([0,2,1])
 a
 a[a<=2] = np.array([44,54])
@@ -281,13 +307,3 @@ b[b>2] = np.array([1])
 b
 
 b
-import numpy as np
-a=np.array([1,2,3,4,5,])
-
-c = a>3
-a[np.invert(c)]
-c
-np.invert(c)
-
-
-np.searchsorted(a,0)
