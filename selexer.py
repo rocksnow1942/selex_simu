@@ -24,17 +24,20 @@ def normalDistribution(avg,std):
         return 1/(std* (2.5066282746310002)) * np.exp(-0.5*((x-avg)/std)**2)
     return cal
 
-def poolBindingTest(pool):
+def poolBindingTest(pool,incubateTime=120,method='auto'):
+    """
+    mix pool binding test with equilibrium method or kinetics method.
+    """
     cc=[]
     per=[]
     kd = pool.meanKd
-    for i in np.geomspace(kd/1e3,kd*1e3,20):
+    for k,i in enumerate(np.geomspace(kd/1e3,kd*1e3,20)):
         c = i * 1e-9 * 100e-6 * NA
         pool.setupPool(c,rareTreat = 0)
-        r = Round(pool,100,kd/1e4)
-        _=r.solve_binding_equil(stochasticCutoff = 0)
+        r = Round(pool,100,kd/1e4,incubateTime,f'Test {k+1}')
+        _=r.solveBinding(method,stochasticCutoff = 0)
         cc.append(i)
-        per.append(100 * r.targetBindRatio)
+        per.append(100 * sum(r.targetBindRatio.values()))
     fig,ax = plt.subplots()
     x = np.array(cc) / 1e3
     ax.plot(x,per)
@@ -45,9 +48,9 @@ def poolBindingTest(pool):
     ax.grid()
     plt.tight_layout()
     plt.show()
-    return x,per
+    return fig,x,per
 
-def plotPoolKdComparison(pools,marker=",",color='tab10'):
+def plotPoolKdComparison(pools,marker=",",color='tab10',breakpoint=[]):
     """
     color is one of matplotlib colormap names.
     Colors include:
@@ -67,34 +70,70 @@ def plotPoolKdComparison(pools,marker=",",color='tab10'):
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Kd / nM')
-    ax.set_ylabel('Count in Pool')
+    ax.set_ylabel('Percentage in Pool %')
     leg = []
     for i,p in enumerate(pools):
         alpha = (i+1)/(len(pools)+0.001)
-        l = ax.plot(p.kds,p.count/p.count.sum() * 1e13 ,marker,color=cm.get_cmap(color)(alpha),)
+        ccolor=cm.get_cmap(color)(alpha)
+        for k,c,m in segKds(p.kds,p.count/p.count.sum() * 100 ,marker,breakpoint):
+            l = ax.plot(k,c ,m,color=ccolor,)
         pat = mpatches.Patch(color=l[0].get_color(), label=p.name or f'R{i}')
         leg.append(pat)
-    ax.legend(handles=leg)
+    ax.legend(handles=leg,bbox_to_anchor=(1, 0.8))
     plt.tight_layout()
     plt.show()
+    return fig
+
+def segKds(kds,counts,marker,breakpoint):
+    index = 0
+    bindex = 0
+
+    for i in breakpoint:
+        new = np.absolute(kds[bindex:] -i ).argmin() + bindex
+        k,c = removeZero( kds[bindex:new],counts[bindex:new])
+        yield k,c,marker[index]
+        bindex = new
+        index +=1
+    k,c = removeZero( kds[bindex:],counts[bindex:])
+    yield k,c,marker[index]
+
+def removeZero(kd,count):
+    return kd[count.nonzero()],count[count.nonzero()]
 
 class Pool:
     """
     represents a pool.
     """
-    def __init__(self,kon,koff,frequency,pcrE=2,count=[],name="Lib"):
+    def __init__(self,kon=None,koff=None,Thalf=None,kds=None,
+                    frequency=None,pcrE=2,count=[],name="Lib"):
         """
         kon is an array of pool sequence on rate in nM-1s-1.
         koff is an array of pool sequence off rate in s-1
         kds is an array of pool sequence Kd in nM.
+        Thalf is pool off half life in seconds.
         frequency is the relative frequency of each sequence.
         pcrE is the pcr efficiency of each sequence. between 1 and 2;
         pcrE can also be an array of efficiency for each sequence.
         """
         self.kon = kon
         self.koff = koff
-        self.kds = koff/kon
+        self.kds = kds
+        if Thalf:
+            self.koff = np.log(2) / Thalf
+        if self.kon is None:
+            self.kon = self.koff / self.kds
+        elif self.koff is None:
+            self.koff = self.kon * self.kds
+        elif self.kds is None:
+            self.kds = self.koff/self.kon
+        else:
+            raise ValueError ('Need input to determine kinetic rate.')
+
         self.frequency = frequency
+        if self.frequency is None:
+            self.frequency = np.full(len(self.kds),1/len(self.kds))
+        if self.frequency.sum() != 1.0:
+            self.frequency = self.frequency / self.frequency.sum()
         self.pcrE = pcrE
         self.count = count
         self.name = name
@@ -157,6 +196,7 @@ class Pool:
         ax.set_ylabel('Count in Pool')
         plt.tight_layout()
         plt.show()
+        return fig
 
 class NormalDistPool(Pool):
     def __init__(self,bins,kdrange=[1e-3,1e8],koff=1,pcrE=2,kdavg=1e6,kdstd=0.5,name="Lib"):
@@ -241,7 +281,8 @@ class Round():
 
         result = odeint(binding_ode,AT0, timepoints, args=(kon,koff,A0, T0))
 
-        while np.absolute((result[-1]-result[-2]) / (timepoints[-1]-timepoints[-2]) ).max() > tol * T0 : # keep integrate
+        # keep integrate while the slope of curve is over tolerance * T0 or time hits EndTime
+        while np.absolute((result[-1]-result[-2]) / (timepoints[-1]-timepoints[-2]) ).max() > tol * T0 :
             if timepoints[-1]>= EndTime:
                 break
             steepest = np.absolute((result[-1]-result[-2]) / timestep).argmax()
@@ -265,9 +306,11 @@ class Round():
             ax.set_xlabel('Time / min')
             ax.set_ylabel(ylabel)
             ax.set_title(title)
+            ax.title.set_position([0.5, 1.05])
             ax.grid()
             plt.tight_layout()
             plt.show()
+            return fig
         if type in ['deterministic','d']:
             assert index < len(self.dIndex), (f"Max deterministic index {len(self.dIndex)-1}")
             a = self.dIndex[index]
@@ -298,9 +341,9 @@ class Round():
                 t = self.dTime
                 y = self.targetConc - self.dATconc.sum(axis=1)
                 title = f"Target Starting Conc. {self.targetConc}nM"
-            plot( t/60 , y ,title,ylabel=f"{curve} Count")
+            return plot( t/60 , y ,title,ylabel=f"[{curve}] Count")
 
-    def solveBindingKinetics(self,stochasticCutoff = 1e3,seCutoff = 1e-2):
+    def solveBindingKinetics(self,stochasticCutoff = 1e3,seCutoff = 1e-2,maxiteration=1e4,**kwargs):
         """
         stochasticCutoff: how many counts down to use stochastic method.
         seCutoff: halflives cut off for a sequence to be considerred by stochastic method.
@@ -318,7 +361,7 @@ class Round():
         dconc = count[dcount]  * (1e6 * 1e9 / NA / self.vol) # conc. in nM
 
         print('Pool {} binding half life {:.2e} ~ {:.2e} minutes.'.format(
-                    self.name, np.log(2)/60/(dkon.max() * T0), np.log(2) /60/ (dkon.min() * T0) ))
+                    self.input.name, np.log(2)/60/(dkon.max() * T0), np.log(2) /60/ (dkon.min() * T0) ))
 
         timepoints, result=self._solve_deterministic_ode(dkon,dkoff,dconc,T0,np.zeros_like(dconc).astype(float),Time)
 
@@ -337,7 +380,7 @@ class Round():
 
         # the one that have halflives < 1/10 of the incubateTime can be considerred reach equilibrium.
         secount = halflives < seCutoff * Time
-        print('Pool {} fast stochastic count {}'.format(self.name, secount.sum()))
+        print('Pool {} fast stochastic count {}'.format(self.input.name, secount.sum()))
         sekds = kds[scount][secount]
         sepercentbinding = finalTfree/(finalTfree + sekds)
         vecbinomial = np.vectorize(np.random.binomial,otypes=[int])
@@ -345,15 +388,15 @@ class Round():
 
         # the remaining ones use simulation.
         sscount = np.invert(secount)
-        print('Pool {} slow stochastic count {}'.format(self.name, sscount.sum()))
+        print('Pool {} slow stochastic count {}'.format(self.input.name, sscount.sum()))
         ssconc = sconc[sscount]
         sskon = skon[sscount]
-        sskoff = skon[sscount]
+        sskoff = skoff[sscount]
         self.ssTrace = []
         self.ssIndex = scount.nonzero()[0][sscount]
         sscomplex = []
         for on,off,c in zip(sskon,sskoff,ssconc):
-            t,atconc = self._solve_stochastic_ode(on,off,c)
+            t,atconc = self._solve_stochastic_ode(on,off,c,maxiteration=maxiteration)
             self.ssTrace.append((t,atconc))
             sscomplex.append(atconc[-1])
 
@@ -371,10 +414,9 @@ class Round():
                 frequency = frequency,pcrE=self.input.pcrE,
                 count = resultcount,name=self.name)
 
-    def _solve_stochastic_ode(self,kon,koff,conc,maxiteration=1e3):
+    def _solve_stochastic_ode(self,kon,koff,conc,maxiteration=1e4):
         """
         solve time course of stochastic binding of aptamer in this round context.
-
         """
         vol = self.vol
         EndTime = self.incubateTime
@@ -399,8 +441,6 @@ class Round():
             time.append(temp)
         return np.array(time),np.array(ATconc)
 
-
-        # pass
     def _getTfreeAtTime(self,t):
         """
         use ODE solved dTime and dATConc to give Tfree at any given time.
@@ -408,10 +448,7 @@ class Round():
         index = np.absolute(self.dTime - t).argmin()
         return self.targetConc - self.dATConc[index].sum()
 
-
-
-
-    def solveBindingEquilibrium(self,stochasticCutoff = 1e3):
+    def solveBindingEquilibrium(self,stochasticCutoff = 1e3,**kwargs):
         count = self.input.count
         kds = self.input.kds
         T0 = self.targetConc
@@ -448,6 +485,30 @@ class Round():
                 frequency = frequency,pcrE=self.input.pcrE,
                 count = resultcount,name=self.name)
 
+    def solveBinding(self,method='auto',**kwargs):
+        """
+        method can be equilibrium or kinetic or auto
+        kwargs are additional arguments
+        for equilibrium: stochasticCutoff=1e3
+        for kinetic: stochasticCutoff = 1e3, seCutoff = 1e-2, maxiteration=1e4,
+        """
+        if method == 'equilibrium':
+            return self.solveBindingEquilibrium(**kwargs)
+        elif method == 'kinetic':
+            return self.solveBindingKinetics(**kwargs)
+        elif method == 'auto':
+            kon = self.input.kon[self.input.count>0]
+            thalf = np.log(2)/(kon * self.targetConc).max()
+            if self.incubateTime > thalf * 1e2:
+                print(f"Round {self.name} solve binding using Equilibrium method")
+                return self.solveBindingEquilibrium(**kwargs)
+            else:
+                print(f"Round {self.name} solve binding using Kinetics method")
+                return self.solveBindingKinetics(**kwargs)
+        else:
+            print('method not exist.')
+            return 0
+
 class Selection():
     def __init__(self,lib,seed=42):
         """
@@ -465,12 +526,24 @@ class Selection():
         else:
             return self.pools[int(i[1])]
 
+    def getRounds(self,i):
+        if isinstance(i,int):
+            return self.rounds[i-1]
+        else:
+            return self.rounds[int(i[1])-1]
+
 
     def runSelection(self,inputCount,volume,targetConc,
-            incubateTime,nonspecific=0,rareTreat='probability',method='equilibrium'):
+            incubateTime,nonspecific=0,rareTreat='probability',
+            **kwargs):
         """
-        selection method can be equilibrium or kinetic
         nonspecific: probability for each sequence to bind nonspecifically.
+        solveBinding: additional arguments to solveBinding.
+        Including:
+        method can be equilibrium or kinetic or 'auto'
+        kwargs are additional arguments
+        for equilibrium: stochasticCutoff=1e3
+        for kinetic: stochasticCutoff = 1e3, seCutoff = 1e-2, maxiteration=1e4,
         """
         pool = self.pools[-1]
         inputCount = eval(inputCount) if isinstance(inputCount,str) else inputCount
@@ -480,10 +553,9 @@ class Selection():
         nonspecific = eval(nonspecific) if isinstance(nonspecific,str) else nonspecific
         pool.setupPool(inputCount,rareTreat)
         rd = Round(pool,volume,targetConc,incubateTime,name=f'R{1+len(self.rounds)}')
-        if method == 'equilibrium':
-            nx = rd.solveBindingEquilibrium()
-        elif method == 'kinetic':
-            nx = rd.solveBindingKinetics()
+
+        nx = rd.solveBinding(**kwargs)
+
 
         if nonspecific:
             nsbinding = rd.nonspecificBinding(nonspecific)
@@ -501,20 +573,24 @@ class Selection():
         self.pools[-1].setupPool(inputCount,rareTreat)
         return self
 
-    def plotPoolsKdHist(self,marker=",",color='Blues',pools=slice(0,None)):
+    def plotPoolsKdHist(self,marker=",",color='Blues',breakpoint=[],pools=slice(0,None)):
         if isinstance(pools,list):
             toplot = [p for i,p in enumerate(self.pools) if i in pools]
         elif isinstance(pools,int):
             toplot = [self.pools[pools]]
         else:
             toplot = self.pools[pools]
-        plotPoolKdComparison(toplot,marker,color)
+        return plotPoolKdComparison(toplot,marker,color,breakpoint)
 
 
+kdtest = Pool(Thalf=np.array([100]),kds=np.array([1]),frequency=np.array([1]))
 
+_=poolBindingTest(kdtest,incubateTime=120,method='equilibrium')
 
+_=poolBindingTest(kdtest,incubateTime=0.1,method='kinetic')
 
-lib = NormalDistPool(bins=1e4,koff=1,kdrange=[1e-3,1e8],kdavg=1e4)
+a=np.array([1,2,3,0,1])
+a[a.nonzero()]
 
 lib.setupPool(1e15,rareTreat =1e-2)
 
@@ -533,7 +609,7 @@ rd.ssTrace[7]
 
 np.array([len(i[0]) for i in rd.ssTrace])
 
-rd.plotBindingKinetics(1,curve='AT',type='s')
+rd.plotBindingKinetics(198,curve='AT',type='d')
 
 len(rd.ssTrace)
 rd.ssTrace[6]
@@ -544,40 +620,8 @@ pool.setupPool(1e13)
 pool.plotKdHist()
 
 
+lib = NormalDistPool(bins=1e4,koff=1,kdrange=[1e-3,1e8],kdavg=1e4)
 
-
-t[-1]
-len(t)
-def plot(x):
-    fig,ax = plt.subplots()
-    ax.plot(t[0:501]/60,[i[x] for i in res[0:501]],)
-    ax.set_xlabel('Time / min')
-    ax.set_ylabel('Conc. / nM')
-    ax.legend(['A','T','AT'])
-    ax.grid()
-    plt.tight_layout()
-    plt.show()
-len(t)
-len(res[-1])
-plot(0)
-np.absolute((res[-1]-res[-2])/(t[-1]-t[-2])).max()
-len(res[-1])
-res[]
-
-
-fig,ax = plt.subplots()
-ax.plot(t[0:501]/60,[10-i.sum() for i in res[0:501]],)
-ax.set_xlabel('Time / min')
-ax.set_ylabel('Conc. / nM')
-ax.legend(['A','T','AT'])
-ax.grid()
-plt.tight_layout()
-plt.show()
-
-
-a=np.array([[1,2],[3,4]])
-
-np.append(a,np.array([[5,6],[9,8]])[1:],axis=0)
 
 s = Selection(lib,seed=42)
 
@@ -594,3 +638,19 @@ s.runSelection(1e15,100,"pool.meanKd/100000",120,rareTreat=1e-2,nonspecific=1e-5
 .runSelection(1e13,100000,"pool.meanKd/100000",120,nonspecific=1e-5)\
 .amplify(targetcount=1e13)\
 .setupPool(1e13)
+
+p = s[-1]
+p.frequency.max()
+
+f=s.plotPoolsKdHist(color='Reds',marker=["x",",",","],breakpoint=[1,1e5],pools=[0,6])
+
+f.savefig('test.svg')
+
+a = np.array([12])
+a is None
+
+s.rounds[5]
+
+s.getRounds('R4').plotBindingKinetics(index=5000,curve='A',type = 'd')
+
+s.rounds[4].plotBindingKinetics(index=10,curve='A',type = 's')
