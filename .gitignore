@@ -5,6 +5,7 @@ __pycache__
 *.json
 *.ipynb
 [Rr]un.*
+test.*
 .env
 .flaskenv
 # Packages
