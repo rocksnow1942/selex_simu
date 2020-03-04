@@ -17,7 +17,7 @@ from scipy.integrate import odeint
 from scipy.optimize import fsolve
 from matplotlib import cm
 import matplotlib.patches as mpatches
-from mymodule import ft_decorator
+# from mymodule import ft_decorator
 
 
 NA = 6.02e23 # avagadro constant
