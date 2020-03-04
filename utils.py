@@ -29,8 +29,8 @@ class FT_Decorator():
                 self.callback(t2-t1)
 
             if self.show and (self.count % self.freq == 0):
-                print('Run {} {} times: avg: {:.5f}s; para:{}{}'.format(
-                    func.__name__, self.count, self.avgtime, args, kwargs))
+                print('Run {} {} times: avg: {:.5f}s; latest: {:.5f}s'.format(
+                    func.__name__, self.count, self.avgtime, t2-t1))
             return result
         wrapped.__signature__ = sig
         wrapped.__name__ = func.__name__

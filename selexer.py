@@ -537,7 +537,7 @@ class Round():
         index = np.absolute(self.dTime - t).argmin()
         return self.targetConc - self.dATConc[index].sum()
 
-    @FT_Decorator()
+    # @FT_Decorator()
     def solveBindingKinetics(self,stochasticCutoff = 1e3,seCutoff = 1e-2,maxiteration=1e4,**kwargs):
         """
         stochasticCutoff: how many counts down to use stochastic method.
@@ -620,7 +620,7 @@ class Round():
                 frequency = frequency,pcrE=self.input.pcrE,
                 count = resultcount,name=self.name)
 
-    @FT_Decorator()
+    # @FT_Decorator()
     def solveBindingEquilibrium(self,stochasticCutoff = 1e3,**kwargs):
         count = self.input.count
         kds = self.input.kds
