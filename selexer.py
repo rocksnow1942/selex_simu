@@ -158,22 +158,19 @@ def calculateLoseChance(scount,skds,Tfree,meanKd):
 def _solve_stochastic_ode(inputs,maxiteration=1e4,EndTime=None,dTime=None,freeT=None):
     """
     solve time course of stochastic binding of aptamer in this round context.
+    inputs is a tuple of kon,koff,conc,seed. conc is the number of molecules.
     """
-    kon,koff,conc=inputs
+    kon,koff,conc,seed=inputs
+    np.random.seed(seed)
     time = [0]
     ATconc = [0] # record of AT complex count
     temp = 0 # keep track of time
     cycles = 0
     index = 0
-
     dTimelength = len(dTime)-1
-
     while cycles < maxiteration:
         cycles +=1
         a = conc - ATconc[-1] # input is count.
-
-        # t = self._getTfreeAtTime(temp)  # get free Target conc. in nM
-        #
         while dTime[index] < temp:
             if index == dTimelength:
                 break
@@ -602,7 +599,9 @@ class Round():
         freeT = self.targetConc - self.dATConc.sum(axis=1)
         task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
                     EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
-        self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc),total=len(sskon),chunks=len(sskon))
+        total = len(sskon)
+        seedss = np.random.randint(1,999999999,size=total)
+        self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc,seedss),total=total,chunks=total)
         sscomplex = [ i[1][-1] for i in self.ssTrace]
 
 
