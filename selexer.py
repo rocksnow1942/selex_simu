@@ -592,17 +592,18 @@ class Round():
         sskon = skon[sscount]
         sskoff = skoff[sscount]
         self.ssTrace = []
-        self.ssIndex = scount.nonzero()[0][sscount]
+        self.ssIndex = scount.nonzero()[0][sscount] # this is to keep track of the index in original self.kds index
         sscomplex = []
 
+        total = len(sskon) # if there is stuff to use stochastic simu.
+        if total:
+            freeT = self.targetConc - self.dATConc.sum(axis=1)
+            task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
+                        EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
 
-        freeT = self.targetConc - self.dATConc.sum(axis=1)
-        task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
-                    EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
-        total = len(sskon)
-        seedss = np.random.randint(1,999999999,size=total)
-        self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc,seedss),total=total,chunks=total)
-        sscomplex = [ i[1][-1] for i in self.ssTrace]
+            seedss = np.random.randint(1,999999999,size=total)
+            self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc,seedss),total=total,chunks=total)
+            sscomplex = [ i[1][-1] for i in self.ssTrace]
 
 
         # combine results together
