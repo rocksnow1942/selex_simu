@@ -1,39 +1,55 @@
 from selexer import Pool, NormalDistPool, Round, Selection,poolBindingTest
 import numpy as np
+from selexer import mprint
+
+mprint.printToScreen = False
+#
+# testPool = Pool(Thalf=np.array([120,120]),kds=np.array([1,1]),
+#                 frequency=np.array([0.5,0.5]),nonspecific=None,pcrE=2,count=np.array([1000,1e9]),name="Test pool")
+# testRound = Round(testPool,100,10,incubateTime=120,name="test Round")
+#
+# for i in range(100):
+#
+# testRound.solveBindingKinetics()
+#
+#
+#
+# for i in range(100):
+#     testRound.solveBindingKinetics()
+#
+#
+# for i in range(100):
+#     testRound.solveBindingKinetics()
+# testRound.plotBindingKinetics(type = 's')
 
 
-
+np.random.seed(10)
 thalf = np.random.random(10000) * (120-1) + 1
 lib = NormalDistPool(bins=1e4,kdrange=[1e-3,1e8],koff=np.log(2)/60/thalf,nonspecific=None,
 pcrE=2,kdavg=1e5,kdstd=0.7)
-
-lib.setupPool(1e13,rareTreat ='probability')
-_=lib.plotPoolHist(xaxis='kds',cumulative=1,xscale='log',yscale='linear',marker="x,",breakpoint=[1])
-_.savefig('libcdf.svg')
-
-_=lib.plotPoolHist(xaxis='kon',cumulative=0,xscale='log',yscale='linear')
-_.savefig('kon.svg')
-_=lib.plotPoolHist(xaxis='koff',cumulative=0,xscale='log',yscale='linear')
-_.savefig('koff.svg')
-
-s[1].meanKd
-_=poolBindingTest(s[1])
-_[0].savefig('R1kd.svg')
-lib.meanKd
-_[0].savefig('bind.svg')
-
+#
 s = Selection(lib,seed=42)
-
-_1=s['R1'].plotBindingKinetics(index=0,curve='AT',type='s')
-_1.savefig('stochasticslow.svg')
-_2=s['R1'].plotBindingKinetics(index=-301,curve='AT',type='s')
-_2.savefig('stochasticfast.svg')
-_.savefig('Tkinetic.svg')
 
 _=s.Bind(inputCount=1e15,volume=100,targetConc=10,incubateTime=120,nonspecific=1e-5,rareTreat=1e-3,
         method='kinetic',stochasticCutoff=1e3,seCutoff=1e-1,maxiteration=1e5) \
 .Wash(washTime=5,nsHalflife=10)\
 .Amplify(targetcount=1e14)
+
+7.937s
+7.67s
+7.96s
+7.58s
+
+# 5.99s
+6.857s
+6.69s
+6.70s
+7.1s
+6.3s
+
+_=s['R1'].plotBindingKinetics(index=325,type='s')
+_=s['R1'].plotBindingKinetics(index=325,type='s')
+
 
 len(s['R1'].dTime)
 len(s['R1'].dATConc)

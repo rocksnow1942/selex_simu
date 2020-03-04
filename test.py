@@ -3,6 +3,12 @@ import matplotlib.pyplot as plt
 from scipy.integrate import odeint
 from scipy.optimize import fsolve
 
+from mymodule import FT_Decorator
+
+@FT_Decorator
+def test(a):
+    print('run')
+    return a
 
 kds = np.geomspace(0.01,1e8,1000) # in nM
 

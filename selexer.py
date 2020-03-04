@@ -17,10 +17,29 @@ from scipy.integrate import odeint
 from scipy.optimize import fsolve
 from matplotlib import cm
 import matplotlib.patches as mpatches
-# from mymodule import ft_decorator
+from utils import poolMap,FT_Decorator
+from functools import partial
 
+
+
+class MyPrint:
+    printToScreen = True
+    data = []
+
+    def callback(self,msg):
+        pass
+    def __call__(self,msg):
+        if self.printToScreen:
+            print(msg)
+        else:
+            self.callback(msg)
+    def record(self,m):
+        self.data.append(m)
+
+mprint = MyPrint()
 
 NA = 6.02e23 # avagadro constant
+
 
 def normalDistribution(avg,std):
     """
@@ -135,6 +154,48 @@ def calculateLoseChance(scount,skds,Tfree,meanKd):
     p = Tfree / (Tfree + k)
     return (1-p)**(int(c))
 
+
+def _solve_stochastic_ode(inputs,maxiteration=1e4,EndTime=None,dTime=None,freeT=None):
+    """
+    solve time course of stochastic binding of aptamer in this round context.
+    """
+    np.random.seed(10)
+    kon,koff,conc=inputs
+    time = [0]
+    ATconc = [0] # record of AT complex count
+    temp = 0 # keep track of time
+    cycles = 0
+    index = 0
+
+    dTimelength = len(dTime)-1
+
+    while cycles < maxiteration:
+        cycles +=1
+        a = conc - ATconc[-1] # input is count.
+
+        # t = self._getTfreeAtTime(temp)  # get free Target conc. in nM
+        #
+        while dTime[index] < temp:
+            if index == dTimelength:
+                break
+            else:
+                index +=1
+        t = freeT[index]
+
+        ar = koff * ATconc[-1]
+        af = kon * a * t
+        suma = af + ar
+        r1 = np.random.random()
+        dt = 1/suma * np.log(1/r1)
+        rxn = np.random.choice([1,-1],p=[af/suma,ar/suma]) # choose reaction forward or reverse.
+        temp += dt
+        if temp > EndTime:
+            break
+        ATconc.append(ATconc[-1]+rxn) # update AT count record.
+        time.append(temp)
+    return np.array(time),np.array(ATconc)
+
+
 class Pool:
     """
     represents a pool.
@@ -159,7 +220,7 @@ class Pool:
         self.kon = kon
         self.koff = koff
         self.kds = kds
-        if Thalf:
+        if Thalf is not None:
             self.koff = np.log(2) / Thalf / 60
         if self.kon is None:
             self.kon = self.koff / self.kds
@@ -214,7 +275,7 @@ class Pool:
         vec = np.vectorize(func)
         count = self.frequency * totalcount
         if count[count.nonzero()].min()<1:
-            print('{} Sequence with count < 1 are chosen by {}.'.format(self,rareTreat))
+            mprint('{} Sequence with count < 1 are chosen by {}.'.format(self,rareTreat))
         self.count = vec(count).astype(float)
         return self
 
@@ -228,7 +289,7 @@ class Pool:
                 self.count = self.pcrE * self.count
         elif cycle:
             self.count = self.count * (self.pcrE ** cycle)
-        print('{}  amplified {} cycles, from {:.2e} to {:.2e}'.format(self,cycle,start,self.count.sum()))
+        mprint('{}  amplified {} cycles, from {:.2e} to {:.2e}'.format(self,cycle,start,self.count.sum()))
         self.amplifycycle = cycle
         self.frequency = self.count / self.count.sum()
         return self
@@ -390,6 +451,7 @@ class Round():
                 title = f"Target Starting Conc. {self.targetConc}nM"
             return plot( t/60 , y ,title,ylabel=f"[{curve}] Count")
 
+
     def _solve_deterministic_ode(self,kon,koff,A0,T0,AT0,EndTime,tol=1e-8):
         """
         solve [A]i + T = [AT]i using ODE.
@@ -436,6 +498,7 @@ class Round():
         """
         solve time course of stochastic binding of aptamer in this round context.
         """
+        np.random.seed(10)
         EndTime = self.incubateTime
         time = [0]
         ATconc = [0] # record of AT complex count
@@ -451,21 +514,13 @@ class Round():
             a = conc - ATconc[-1] # input is count.
 
             # t = self._getTfreeAtTime(temp)  # get free Target conc. in nM
-
+            #
             while dTime[index] < temp:
                 if index == dTimelength:
                     break
                 else:
                     index +=1
             t = freeT[index]
-            # if dTime[index]>=temp:
-            #     t = freeT[index]
-            # else:
-            #     if index == dTimelength:
-            #         t=freeT[-1]
-            #     else:
-            #         index +=1
-
 
             ar = koff * ATconc[-1]
             af = kon * a * t
@@ -487,6 +542,7 @@ class Round():
         index = np.absolute(self.dTime - t).argmin()
         return self.targetConc - self.dATConc[index].sum()
 
+    @FT_Decorator()
     def solveBindingKinetics(self,stochasticCutoff = 1e3,seCutoff = 1e-2,maxiteration=1e4,**kwargs):
         """
         stochasticCutoff: how many counts down to use stochastic method.
@@ -505,7 +561,7 @@ class Round():
         dconc = count[dcount]  * (1e6 * 1e9 / NA / self.vol) # conc. in nM
 
         if len(dkon)>0:
-            print('{} binding half life {:.2e} ~ {:.2e} minutes.'.format(
+            mprint('{} binding half life {:.2e} ~ {:.2e} minutes.'.format(
                         self.input, np.log(2)/60/(dkon.max() * T0), np.log(2) /60/ (dkon.min() * T0) ))
 
         timepoints, result=self._solve_deterministic_ode(dkon,dkoff,dconc,T0,np.zeros_like(dconc).astype(float),Time)
@@ -525,10 +581,10 @@ class Round():
         skds = kds[scount]
 
 
-        print('{} lose best binder in pool chance: {:.2%}'.format(self, calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
+        mprint('{} lose best binder in pool chance: {:.2%}'.format(self, calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
         # the one that have halflives < 1/10 of the incubateTime can be considerred reach equilibrium.
         secount = halflives < seCutoff * Time
-        print('{} fast stochastic count {}'.format(self.input, secount.sum()))
+        mprint('{} fast stochastic count {}'.format(self.input, secount.sum()))
         sekds = skds[secount]
         sepercentbinding = Tfree/(Tfree + sekds)
         vecbinomial = np.vectorize(np.random.binomial,otypes=[int])
@@ -536,13 +592,21 @@ class Round():
 
         # the remaining ones use simulation.
         sscount = np.invert(secount)
-        print('{} slow stochastic count {}'.format(self.input, sscount.sum()))
+        mprint('{} slow stochastic count {}'.format(self.input, sscount.sum()))
         ssconc = sconc[sscount]
         sskon = skon[sscount]
         sskoff = skoff[sscount]
         self.ssTrace = []
         self.ssIndex = scount.nonzero()[0][sscount]
         sscomplex = []
+
+
+        # freeT = self.targetConc - self.dATConc.sum(axis=1)
+        # task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
+        #             EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
+        # self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc),total=len(sskon),chunks=len(sskon))
+        # sscomplex = [ i[1][-1] for i in self.ssTrace]
+
         for on,off,c in zip(sskon,sskoff,ssconc):
             t,atconc = self._solve_stochastic_ode(on,off,c,maxiteration=maxiteration)
             self.ssTrace.append((t,atconc))
@@ -591,7 +655,7 @@ class Round():
 
         # calculate the chance to loose best binder in pool.
 
-        print('{} lose best binder in pool chance: {:.2%}'.format(self, calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
+        mprint('{} lose best binder in pool chance: {:.2%}'.format(self, calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
 
 
 
@@ -626,13 +690,13 @@ class Round():
             thalf = np.log(2)/((1/(freq/kon).sum()) * max( self.targetConc, self.aptamerConc)) / 60
 
             if self.incubateTime > thalf * 5:
-                print(f"{self} solve binding using Equilibrium method")
+                mprint(f"{self} solve binding using Equilibrium method")
                 return self.solveBindingEquilibrium(**kwargs)
             else:
-                print(f"{self} solve binding using Kinetics method")
+                mprint(f"{self} solve binding using Kinetics method")
                 return self.solveBindingKinetics(**kwargs)
         else:
-            print('method not exist.')
+            mprint('method not exist.')
             return 0
 
 
