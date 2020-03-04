@@ -230,11 +230,6 @@ import numpy as np
 np.random.choice([[1,2],[2,3]],p=[0.1,0.9])
 a=np.array([1,2,3])
 
-def test(a):
-    a-=1
-    print(a)
-test(a[-2])
-a
 THeo = np.random.binomial(1000,0.5)
 THeo
 A = [i[0] for i in conc]
