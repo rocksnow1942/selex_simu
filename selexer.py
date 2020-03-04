@@ -620,6 +620,7 @@ class Round():
                 frequency = frequency,pcrE=self.input.pcrE,
                 count = resultcount,name=self.name)
 
+    @FT_Decorator()
     def solveBindingEquilibrium(self,stochasticCutoff = 1e3,**kwargs):
         count = self.input.count
         kds = self.input.kds
