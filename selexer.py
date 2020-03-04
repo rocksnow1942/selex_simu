@@ -159,7 +159,6 @@ def _solve_stochastic_ode(inputs,maxiteration=1e4,EndTime=None,dTime=None,freeT=
     """
     solve time course of stochastic binding of aptamer in this round context.
     """
-    np.random.seed(10)
     kon,koff,conc=inputs
     time = [0]
     ATconc = [0] # record of AT complex count
@@ -498,7 +497,6 @@ class Round():
         """
         solve time course of stochastic binding of aptamer in this round context.
         """
-        np.random.seed(10)
         EndTime = self.incubateTime
         time = [0]
         ATconc = [0] # record of AT complex count
@@ -601,16 +599,12 @@ class Round():
         sscomplex = []
 
 
-        # freeT = self.targetConc - self.dATConc.sum(axis=1)
-        # task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
-        #             EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
-        # self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc),total=len(sskon),chunks=len(sskon))
-        # sscomplex = [ i[1][-1] for i in self.ssTrace]
+        freeT = self.targetConc - self.dATConc.sum(axis=1)
+        task = partial(_solve_stochastic_ode,maxiteration=maxiteration,
+                    EndTime = self.incubateTime,dTime=self.dTime,freeT=freeT)
+        self.ssTrace = poolMap(task,zip(sskon,sskoff,ssconc),total=len(sskon),chunks=len(sskon))
+        sscomplex = [ i[1][-1] for i in self.ssTrace]
 
-        for on,off,c in zip(sskon,sskoff,ssconc):
-            t,atconc = self._solve_stochastic_ode(on,off,c,maxiteration=maxiteration)
-            self.ssTrace.append((t,atconc))
-            sscomplex.append(atconc[-1])
 
         # combine results together
         resultcount = np.zeros_like(count).astype(float)

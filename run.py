@@ -35,17 +35,6 @@ _=s.Bind(inputCount=1e15,volume=100,targetConc=10,incubateTime=120,nonspecific=1
 .Wash(washTime=5,nsHalflife=10)\
 .Amplify(targetcount=1e14)
 
-7.937s
-7.67s
-7.96s
-7.58s
-
-# 5.99s
-6.857s
-6.69s
-6.70s
-7.1s
-6.3s
 
 _=s['R1'].plotBindingKinetics(index=325,type='s')
 _=s['R1'].plotBindingKinetics(index=325,type='s')
