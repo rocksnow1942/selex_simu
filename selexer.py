@@ -663,7 +663,7 @@ class Round():
         resultcount[scount] = scomplex
 
         loss =  np.count_nonzero(count[kwargs['top']]) - np.count_nonzero(resultcount[kwargs['top']])
-        print(f'Lost {loss} sequences in {self} binding')
+        mprint(f'Lost {loss} sequences in {self} binding')
 
         frequency = resultcount / resultcount.sum()
         self.equilibriumOutput = resultcount
