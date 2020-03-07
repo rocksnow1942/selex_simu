@@ -1,6 +1,7 @@
 *.py[cod]
 __pycache__
 # C extensions
+.ipynb_checkpoints
 *.so
 *.json
 *.ipynb
