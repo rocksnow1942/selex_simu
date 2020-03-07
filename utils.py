@@ -2,6 +2,7 @@ from inspect import signature
 import timeit
 import psutil
 import multiprocessing
+from itertools import product
 
 class FT_Decorator():
     def __init__(self,freq=1,callback=None,show=True):
@@ -65,3 +66,15 @@ def poolMap(task,workload,initializer=None,initargs=None,chunks=None,
     worker.join()
     worker.terminate()
     return result
+
+
+def cartesian(*arrays):
+    """
+    Give a list of arrays, return iterator of product of elements from arrays.
+    similar to python product, but also yield indexes.
+    """
+    lenths = [len(i) for i in arrays]
+    l = product(*lenths)
+    p = product(*arrays)
+    for i,j in zip(l,p):
+        yield i,j

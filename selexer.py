@@ -17,8 +17,12 @@ from scipy.integrate import odeint
 from scipy.optimize import fsolve
 from matplotlib import cm
 import matplotlib.patches as mpatches
-from utils import poolMap,FT_Decorator
+from utils import poolMap,cartesian
+# from utils import FT_Decorator
 from functools import partial
+from itertools import product
+from collections import deque
+from scipy.optimize import minimize
 
 
 
@@ -39,7 +43,6 @@ class MyPrint:
 mprint = MyPrint()
 
 NA = 6.02e23 # avagadro constant
-
 
 def normalDistribution(avg,std):
     """
@@ -153,7 +156,6 @@ def calculateLoseChance(scount,skds,Tfree,meanKd):
     if k>=meanKd: return 0 # if rare sequence have bad kd, no chance to lose good ones
     p = Tfree / (Tfree + k)
     return (1-p)**(int(c))
-
 
 def _solve_stochastic_ode(inputs,maxiteration=1e4,EndTime=None,dTime=None,freeT=None):
     """
@@ -290,12 +292,13 @@ class Pool:
         self.frequency = self.count / self.count.sum()
         return self
 
-    def wash(self,washTime,nsOffrate=None,nsHalflife=None):
+    def wash(self,washTime,nsOffrate=None,nsHalflife=None,top=None):
         """
         washTime: in minutes
         nsHalflife : in minutes
         WIll update self.nscount and create self.sbcount.
         """
+        beforewash = np.count_nonzero(self.count[top])
         washTime = washTime * 60
         vec = np.vectorize(np.random.binomial)
         # calculate specific binding left over.
@@ -314,6 +317,8 @@ class Pool:
         self.count = self.sbcount + self.nscount
         if not self.count.sum():
             raise ValueError ('Wash too harsh. Nonthing left.')
+        postwash = np.count_nonzero(self.count[top])
+        mprint(f'Lost {beforewash-postwash} in {self} washing.')
         self.frequency = self.count/self.count.sum()
         return self
 
@@ -326,11 +331,11 @@ class NormalDistPool(Pool):
         Kd in nM,
         normal distribution on Log Concentration scale.
         """
-        self.bins = bins
+        self.bins = int(bins)
         self.kdrange = kdrange
         self.kdavg = kdavg
         self.kdstd = kdstd
-        self.kds = np.geomspace(*kdrange,bins)
+        self.kds = np.geomspace(*kdrange,self.bins)
         self.kon = koff / self.kds
         self.koff = self.kon * self.kds
         self.pcrE = pcrE
@@ -446,7 +451,6 @@ class Round():
                 y = self.targetConc - self.dATconc.sum(axis=1)
                 title = f"Target Starting Conc. {self.targetConc}nM"
             return plot( t/60 , y ,title,ylabel=f"[{curve}] Count")
-
 
     def _solve_deterministic_ode(self,kon,koff,A0,T0,AT0,EndTime,tol=1e-8):
         """
@@ -648,16 +652,18 @@ class Round():
         # draw by binomial distribution and convert to nM concentration.
         scomplex = vecbinomial(sconc,percentbinding)
 
+
         # calculate the chance to loose best binder in pool.
 
-        mprint('{} lose best binder in pool chance: {:.2%}'.format(self, calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
-
-
-
+        mprint('{} lose best binder in pool chance: {:.2%}'.format(self,
+            calculateLoseChance(sconc,skds,Tfree,self.input.meanKd)))
 
         resultcount = np.zeros_like(count).astype(float)
         resultcount[dcount] = dcomplex * self.vol * NA / 1e15
         resultcount[scount] = scomplex
+
+        loss =  np.count_nonzero(count[kwargs['top']]) - np.count_nonzero(resultcount[kwargs['top']])
+        print(f'Lost {loss} sequences in {self} binding')
 
         frequency = resultcount / resultcount.sum()
         self.equilibriumOutput = resultcount
@@ -694,17 +700,27 @@ class Round():
             mprint('method not exist.')
             return 0
 
-
 class Selection():
     def __init__(self,lib,seed=42):
         """
-        library is a pool already run setup..
+        library is a pool.
         """
         self.seed = [seed]
         # np.random.seed(seed)
-        self.lib = lib
-        self.pools = [self.lib]
+
+        self.pools = [lib]
         self.rounds = []
+
+    def freezeTop(self):
+        assert len(self.pools)==1, (f'Cannot freezeTop with {len(self.pools)} pools.')
+        lib = self.pools[0]
+        top = int(len(lib.kds) * 0.01 +1) # monitor top 1% sequence
+
+        nonzero = lib.count.nonzero()
+        nonzero_topindex = lib.kds[nonzero].argsort()[0:top]
+        topindex = nonzero[0][nonzero_topindex]
+
+        self.top = topindex
 
     def __repr__(self):
         return f"Selection {len(self.rounds)} rounds"
@@ -749,9 +765,13 @@ class Selection():
         incubateTime = eval(incubateTime) if isinstance(incubateTime,str) else incubateTime
         nonspecific = eval(nonspecific) if isinstance(nonspecific,str) else nonspecific
         pool.setupPool(inputCount,rareTreat)
+
+        # if this is the first round, mark down top sequence index.
+        if len(self.pools) == 1:
+            self.freezeTop()
         rd = Round(pool,volume,targetConc,incubateTime,name=f'R{1+len(self.rounds)}')
 
-        nx = rd.solveBinding(**kwargs) # generate a new pool from Round.solveBinding
+        nx = rd.solveBinding(top=self.top,**kwargs) # generate a new pool from Round.solveBinding
 
         if nonspecific:
             nsbinding = rd.nonspecificBinding(nonspecific)
@@ -768,7 +788,7 @@ class Selection():
         nsOffrate is the off rate for ns binding be removed.
         """
         np.random.seed(self.seed[-1])
-        _=self.pools[-1].wash(washTime,nsOffrate,nsHalflife)
+        _=self.pools[-1].wash(washTime,nsOffrate,nsHalflife,top=self.top)
         return self
 
     def Amplify(self,targetcount=None,cycle=None):
@@ -789,3 +809,136 @@ class Selection():
         else:
             toplot = self.pools[pools]
         return plotPoolHist(toplot,xaxis,marker,color,breakpoint,cumulative=cumulative,**kwargs)
+
+    def enrichScore(self,round=None,mode = 'default'):
+        """
+        Define a way to calculate enrich score.
+        """
+        if round:
+            cp = self[round]
+            lp = self.pools[ self.pools.index(cp) -1 ]
+        else:
+            cp = self.pools[-1]
+            lp = self.pools[-2]
+
+        if mode == 'default':
+            loss = np.count_nonzero(lp.frequency[self.top])-np.count_nonzero(cp.frequency[self.top])
+            mprint(f'Lost {loss} out of {len(self.top)} sequences.')
+            return (cp.frequency[self.top].sum()/lp.frequency[self.top].sum())**(1/(loss+1))
+
+    def optimizeFunction(self,**kwargs):
+        inputCount = kwargs.pop('inputCount',1e14)
+        nonspecific = kwargs.pop('nonspecific',0)
+        rareTreat = kwargs.pop('rareTreat','probability')
+        nsOffrate = kwargs.pop('nsOffrate',None)
+        nsHalflife = kwargs.pop('nsHalflife',None)
+        targetcount = kwargs.pop('targetcount',None)
+        cycle = kwargs.pop('cycle',None)
+        mode = kwargs.pop('mode','default')
+        def wrapped(x):
+            v,t,i,w = x
+            self.Bind(inputCount=inputCount,volume=v,targetConc=t,incubateTime=i,
+                    nonspecific=nonspecific,rareTreat=rareTreat,**kwargs)\
+                .Wash(washTime=w,nsOffrate=nsOffrate,nsHalflife=nsHalflife)\
+                .Amplify(targetcount=targetcount,cycle=cycle)
+            score = self.enrichScore(mode = mode)
+            self.Undo()
+            return -score
+        return wrapped
+
+    def searchParameters(self,volume, targetConc,incubateTime,washTime,mMethod,
+                options,**kwargs):
+        """
+        Possible searchParameters:
+        volume: 10 - 100000 uL
+        targetConc: 1e-3 - 1e3 nM
+        incubateTime: 10 - 1000 minutes
+        wash Time 1 - 1000 minutes
+        kwargs:
+        inputCount = kwargs.pop('inputCount',1e14)
+        nonspecific = kwargs.pop('nonspecific',0)
+        rareTreat = kwargs.pop('rareTreat','probability')
+        nsOffrate = kwargs.pop('nsOffrate',None)
+        nsHalflife = kwargs.pop('nsHalflife',None)
+        targetcount = kwargs.pop('targetcount',None)
+        cycle = kwargs.pop('cycle',None)
+        mode = kwargs.pop('mode','default')
+        use optimize.minimize
+        mMethod:
+        ‘Nelder-Mead’ (see here)
+        ‘Powell’ (see here)
+        ‘CG’ (see here)
+        ‘BFGS’ (see here)
+        ‘Newton-CG’ (see here)
+        ‘L-BFGS-B’ (see here)
+        ‘TNC’ (see here)
+        ‘COBYLA’ (see here)
+        ‘SLSQP’ (see here)
+        ‘trust-constr’(see here)
+        ‘dogleg’ (see here)
+        ‘trust-ncg’ (see here)
+        ‘trust-exact’ (see here)
+        ‘trust-krylov’ (see here)
+        """
+        func = self.optimizeFunction(**kwargs)
+        x0 = np.array([(i[0]*i[1])**0.5 for i in (volume, targetConc,incubateTime,washTime)])
+        res = minimize(func,x0,method=mMethod,options=options)
+
+        return res
+
+
+
+class OneDirectionWalkOptimizer():
+    maxHistory = 100
+    def __init__(self,parameterRange,optimizeTask):
+        """
+        the optmizeTask should be a self contained task, that run with a parameter
+
+        """
+        # start from the geometric center of ranges
+        self.center = np.array([(i[0]*i[1])**0.5 for i in parameterRange])
+        self.step = 2
+        self.optimizeTask = optimizeTask
+        self.history = deque()
+        self.direction = None
+
+    def startCenter(self):
+        para = tuple(self.center)
+        centerScore = self.optimizeTask(*para)
+        self.history.append({'result':[(para,centerScore)],'best':(para,centerScore)})
+
+    def nextStep(self):
+        if not self.direction:
+            return np.array([np.array([1,1/self.step,1*self.step])]*len(self.center))
+        else:
+            return self.direction
+
+    def optimizeSpace(self):
+        return product(*(self.center.reshape(-1,1)*self.nextStep()))
+
+    def walkOneStep(self):
+        results = []
+        lastBest = self.history and self.history[-1]['best']
+        for para in self.optimizeSpace():
+            if para == lastBest[0]:
+                score = lastBest[1]
+            else:
+                score = self.optimizeTask(*para)
+            results.append((para,score))
+        self.history.append({'result':results})
+        if len(self.history)>self.maxHistory:
+            self.history.popleft()
+
+    def nextCenter(self):
+        best = max(self.history[-1]['result'],key=lambda x:x[1])
+        self.history[-1]['best'] = best
+        lastBest = self.history[-2]['best']
+        currentCenter = tuple(self.center)
+        # if current best is current center, use smaller steps
+        if best[0]==currentCenter:
+            self.step = self.step**0.5
+        else:
+            pass
+
+    def evaluate(self):
+        pass
